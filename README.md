@@ -249,8 +249,9 @@ The full research log, including dead ends, is in [PROGRESS.md](PROGRESS.md).
 - The [Arcade-Projects](https://www.arcade-projects.com/) community for keeping
   the card's story alive.
 
-Reverse engineering and tooling by [msaifuddin](https://github.com/msaifuddin)
-with Claude (Anthropic).
+The early tooling (image validation, ECC stripping, page diffing, the
+`PS2AC05` unpacker port) was built with OpenAI Codex; the cipher, card layout,
+account record and CPU model were worked out with Claude (Anthropic).
 
 ## License
 
