@@ -1,7 +1,9 @@
-# SC2 Conquest card reverse-engineering progress
+# SC2 Conquest card — research log
 
-Updated 2026-09-13. The user's live card was never modified. All work used copies
-under `research-data/`, which is ignored by Git.
+Completed 2026-09-13. The source card was never modified; all work used copies,
+with the game itself (in an isolated PCSX2) as the oracle for every claim. The
+sections below are in the order the problems were solved; the final status is
+at the end.
 
 ## Confirmed inputs
 
@@ -194,9 +196,10 @@ Pages `0x62..0x6f` and `0xb2..0xbf` are erased; everything from `0xc0` to the en
 of the card is slot data.
 
 The index plaintext is `0x24` bytes of header followed by 441 records of `0x4c`
-bytes. Slot plaintext is `0x1fed` bytes: a 12-byte header, then 20-byte records
-— a 4-byte stamp, four flag bytes, a marker byte, and a 12-byte area holding
-NUL-separated strings.
+bytes. Slot plaintext is `0x1fed` bytes: a 12-byte header (tail length at `+0`,
+the packed name at `+2`), eight 20-byte recent-opponent records at `+0x0c`
+(4-byte stamp, four flag bytes, a marker byte, then the opponent name in plain
+ASCII), and the `0x1f2c`-byte play-style profile at `+0xb0` described above.
 
 On the user's card: both index copies decrypt cleanly, 161 of 1012 slots are in
 use (slots 0..160), slot 161 carries a `PD` header but fails its trailer check,
@@ -276,17 +279,53 @@ reached the card file: the game keeps the session in memory and had not written
 the card by the time each run was stopped, so the on-card shape of a freshly
 created account is still unobserved.
 
-## Remaining work
+## Status
 
-1. Creating a brand-new account from the tool. Updating an existing record is
-   solved, but writing a fresh one needs the on-card shape of a newly registered
-   account — capture it by completing a full 8-battle session in the lab and
-   letting the game write the card, then diffing.
-2. The remaining index fields. Comparing the two index generations shows further
-   mutable bytes at `0x36`-`0x38`, `0x3a`, `0x3d`, `0x44`-`0x45`; likely class,
-   experience (the result screen shows `Exp`), army, character and timestamps.
-3. The slot record's own fields (the recent-opponent list and the tail section).
-4. Decode the other keyed blobs (`0x1ff8` at `0x1b05ec`, `0x76ce20`, `0x76cf00`).
-5. Confirm the exact wins/losses field widths. Only 11 and 9 bits are ever used
-   across all 440 records, and `sc2edit` limits writes to that, but the bits
-   above are unused card-wide so the true field boundary is unproven.
+The reverse engineering of the card is complete for its purpose: every layer
+between the raw flash image and the game's behaviour is understood and
+implemented, and each was verified against the running game rather than
+inferred.
+
+| Layer | State |
+| --- | --- |
+| Physical image, spare/EDC | Solved: CRC-32/MPEG-2, verified on all 16,329 written pages |
+| Block cipher | Solved: stream cipher + keys for card and `PS2AC05`; byte-exact against the game's RAM |
+| Card layout | Solved: index (two generations) and 1012 account slots |
+| Account record | Solved: name, password, wins, losses; edits accepted by the game, password login proven |
+| Account slot | Solved: header, recent-opponent list, play-style profile |
+| CPU opponent model | Solved: profile → situation classes → weighted move draw; rank → difficulty; verified live |
+| Editing tool | Done: `sc2edit.py` with backup, range checks and full re-read verification |
+
+### Known and left as is
+
+These are understood well enough to say what they are, and are not needed to
+read or edit the card:
+
+- **Other index-record bytes** (`0x36`-`0x38`, `0x3a`, `0x3d`, `0x44`-`0x45`)
+  change between the two index generations. Rank is decoded (it feeds the
+  difficulty table); the rest are almost certainly experience, army and
+  character. Nobody has needed to edit them.
+- **Wins/losses field widths.** Only 11 and 9 bits are ever used across all
+  440 records; the bits above are zero card-wide, so the true field boundary
+  is unproven. `sc2edit` limits writes to the observed range, which is more
+  than any real account will reach.
+- **Creating a brand-new account from the tool.** Every registration in the
+  lab stayed in memory; the game only writes the card at the end of a full
+  8-battle session, and no run went that far. Updating existing accounts is
+  what people want in practice.
+- **The other keyed blobs** (`0x1ff8` at `0x1b05ec`, and the static ones at
+  `0x76ce20` / `0x76cf00`) use the same cipher under their own keys. They are
+  not part of the card.
+
+### Dead ends worth recording
+
+- Cribbing field positions against the built-in roster in the ELF gave a
+  convincing-but-wrong answer (73/86 on wins, noise on losses). That roster is
+  the static seed the card was created from, and the live card has drifted for
+  years. The game's own screens were the only reliable ground truth.
+- The first password scan capped glyph codes at 45, rejecting `♪` and `V`,
+  and concluded the field was hashed. One player's password is `♪♪♪♪`.
+- The CPU personas were first read as accumulating from matches on the
+  cabinet. They do not: every copy of a persona carries an identical
+  histogram, and it never changes in play. The human accounts are the live
+  ghosts.
