@@ -1,0 +1,3 @@
+# Only the analysis tools need these; sc2edit/sc2cardfs/sc2card have no dependencies.
+capstone>=5.0      # ee_xrefs.py, ee_disasm.py, research_xrefs.py
+zstandard>=0.22    # extract_state.py (PCSX2 save states)

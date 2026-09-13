@@ -1,0 +1,13 @@
+# Card images, RAM dumps, the lab emulator and Namco's game files live here.
+# Only the sample card under samples/ is published.
+research-data/
+
+# Vendored dependencies (capstone, mymc+, SC2MAKER, SoulCalibur2-game-unpacker)
+# are credited in the README and installed separately, not redistributed.
+third_party/
+
+__pycache__/
+*.pyc
+*.edited
+*.bak
+publish.ps1
