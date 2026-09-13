@@ -213,7 +213,7 @@ The full research log, including dead ends, is in [PROGRESS.md](PROGRESS.md).
   the card's story alive.
 
 Reverse engineering and tooling by [msaifuddin](https://github.com/msaifuddin)
-with Claude (Anthropic).
+with Codex and Claude.
 
 ## License
 
