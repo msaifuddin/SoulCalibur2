@@ -93,6 +93,93 @@ these positions exactly. An earlier attempt to crib against the built-in roster
 at `0x49b5f0` failed — that roster is the static seed the card was created from,
 and the live card has drifted away from it.
 
+## The per-account profile (how the CPU "learns")
+
+The slot tail (`0x1f2c` bytes at blob `+0xb0`) is a play-style profile, and its
+layout is an exact fit: `0x2c + 8 × 0x1f0 × 2 = 0x1f2c`.
+
+| Offset | Contents |
+| --- | --- |
+| `+0x00` | 4 floats in [0,1] — the Analysis meters (Soul/Power/Skill/Wisdom) |
+| `+0x10` | aggregates: floats, bytes and halfwords, `+0x28` a saturating match counter |
+| `+0x2c` | 8 rows × 0x1f0 bytes of move IDs, keyed by situation |
+| `+0xfac` | 8 rows × 0x1f0 bytes of counts (saturate at 255), parallel to the above |
+
+Battle-module code (`0x1f7000`-`0x1fbc00`, a different module from the Conquest
+menus) owns it:
+
+- `0x1a7968` loads your own profile to `[0x2a7ddc]` (= `0xcca000`) at login;
+  `0x1aba64` loads the eight enemies into `0xccc000 + i*0x2000` once the battle
+  order is fixed (confirmed in RAM at the VS screen: CRESCENT at `0xccc000`,
+  KENTON at `0xcce000`, ROA at `0xcd2000` …).
+- `0x1fa818` computes `base + (battle << 13)` and `0x1fa848` installs that
+  pointer into the fighter object at `+0x820` — so the opponent fighter carries
+  the persona's profile.
+- `0x1f7da0` blends the four ratios and aggregates with a per-class table at
+  `0x3fde78` and writes a parameter block into the fighter at `+0xfe4`.
+- `0x1f7030` records each move: for the situation keys on the stack, find or
+  create the row holding the move ID and bump its count by `8/n`.
+- `0x1f777c` reads the counts back for the current move; `0x1f7a28` recomputes
+  the ratios after a match with a 0.8 decay; `0x1f7f88` initialises a fresh
+  profile; `0x1fbb98` clears the histogram.
+
+### The complete CPU model (all gaps closed, verified live)
+
+**Histogram semantics.** Column = move index into the character's command
+table; the 8 row slots hold `(situation id, count)` pairs. So each cell says
+"this account used move M in situation S, N times". Counts are bumped by
+`8 / n_situations` (saturating at 255), which is why every value on the card is
+a multiple of 4.
+
+**Situation id** (`fighter+0x1cd8`, copied to `+0x1cca`), computed by
+`0x1f9648`, whose Shift-JIS debug labels name the classes:
+
+| bits 0-2: distance (`0x1ffa30`) | bits 3-5: opponent state (`0x1ffb38`) |
+| --- | --- |
+| 0 至近距離 point-blank, 1 近距離 close, 2 中近距離 mid-close, 3 中距離 mid, 4 遠距離 far, 5 超遠距離 very far | 0 neutral, 1 対歩き walking, 2 対ダウン downed, 5 対AIR airborne |
+
+**Move numbering.** `fighter+0x1c` points at the character's command table,
+0x30 bytes per move with a **name string at +4** in numpad notation:
+`cmd_12_66B`, `cmd_12_RUN6B`, `cmd_0b_YOKOMAWASI_BK`. Character id is in the
+name (`12` Astaroth, `0b` Ivy, `16` Talim). Fields: `+0x2a` flags, `+0x2c`
+category, `+0x2e/+0x2f` range bytes. `fighter+0x2548` holds the move index the
+fighter last executed — a live move-by-move feed over PINE.
+
+**Move selection (ghost).** `0x1f75f8(fighter, flagmask, category, range)`:
+filter the command table by range/flags/category into `fighter+0x826`, pair
+each candidate with its histogram count for the current situation, sum, roll
+`0x1406d0` (RNG float) × total, and return the first candidate whose cumulative
+count exceeds the roll; −1 when there is no history. Seven callers in the AI
+decision tree (`0x1f1ce0`, `0x1f3a70`, `0x1f3be4`, `0x1f3d58`, `0x1f3e58`,
+`0x1f3f64`, `0x1f46a4`). The ghost path is taken only when the game-mode word
+`0x2a6c04 == 10` (Conquest); otherwise `0x1f1b88`, the scripted chooser.
+
+**Difficulty.** `0x1f8040` maps the opponent's rank byte through the u32 table
+at `0x3feb58` to a CPU level 0-11 (Newcomer 2, Peasant 3, Apprentice 4,
+Squire 5, Infantryman/Soldier 6, Knight/Lieutenant 7, Captain/Colonel 8,
+General/Champion 9, Lord/Overlord 10, King/Edge Master 11; +1 unless the byte
+at `+0x33e` is set). The level indexes base tables (`0x3fde78` 7 floats/level,
+`0x3fda00` 0x48/level, `0x3fe038` 0x24/level, `0x3fe278` 8 bytes/level).
+`0x1f7da0` writes `fighter+0xfe4..` as `base[level] + profile-derived term,
+capped at base[level+1]`; the decision code then gates behaviour with
+`rand < parameter` (`0x1f60c0`, `0x1f5638`). Observed live: `<KENTON♪>`
+(Silver Peasant) had `15.3 15.3 12 10 0 0 1` = level-3 row plus small bumps.
+
+**Who learns.** The recorder `0x1f7030` runs for both fighters, but a CPU
+persona's buffer never changes during a fight, and all copies of a persona on
+the card (three armies) carry byte-identical histograms and ratios while their
+recent-opponent headers differ. The bracketed personas are therefore **static
+ghosts shipped by Namco** (`cpudata`/`COMLOAD` strings sit beside the
+situation labels); only their W/L, rank and opponent lists evolve. What does
+learn is the **human accounts**: the recorder fills your histogram as you play,
+and when another player meets you on their enemy list the game fights as you,
+with your recorded move preferences. That is the actual ghost system.
+
+**Fighter objects (this build, Conquest):** P1 at `0x3f7830`, CPU at
+`0x3fa914`; profile pointer at `+0x820`, command table at `+0x1c`, situation
+at `+0x1cd8`, last move at `+0x2548`, derived parameters at `+0xfe4`. Profile
+buffers: own at `0xcca000`, enemy N at `0xcca000 + N*0x2000`.
+
 ## Card layout (data pages, ECC stripped)
 
 | Page | Contents |

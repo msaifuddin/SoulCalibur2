@@ -86,6 +86,37 @@ Glyph codes index the game's own table at EE `0x49b9a0`:
 appears as ASCII on the card. The game's CPU opponents have bracketed names
 (`<FALCATA>`); names registered at the cabinet do not.
 
+## How the CPU opponents work
+
+Every account slot also carries an 8 KB **play-style profile**: four ratios
+that match the game's Analysis meters, some aggregates, and a histogram of
+*(move, situation) → count*. The layout is an exact fit for the slot tail:
+`0x2c + 8 × 0x1f0 × 2 = 0x1f2c`.
+
+In Conquest the CPU chooses moves from that histogram. The game classifies
+the moment into a situation id — distance class in bits 0-2, opponent state
+in bits 3-5, with the developers' own labels still in the binary (至近距離
+point-blank … 超遠距離 very far; 対歩き walking, 対ダウン downed, 対AIR
+airborne) — filters the character's command table for the range, weights each
+candidate by its count in that situation, and draws by cumulative weight.
+Difficulty comes from a rank → level table (Newcomer 2 … Edge Master 11) that
+selects base parameters, blended with the profile.
+
+Two things fell out of verifying this live:
+
+- The bracketed personas (`<FALCATA>` and friends) are **static ghosts
+  authored by Namco**: every copy of a persona on the card carries a
+  byte-identical histogram, and it never changes during a fight.
+- **Human accounts are the live ghosts.** The recorder fills your histogram as
+  you play, and when another player draws you as an opponent the game fights
+  as you, with your recorded preferences.
+
+Move indices resolve to names in numpad notation (`cmd_12_66B`,
+`cmd_12_RUN6B`), so a persona's style reads directly: `<KENTON♪>` is an
+Astaroth who lives on 66B and running 6B at close range and punishes downed
+opponents with 2B+K. Addresses and the full trace are in
+[PROGRESS.md](PROGRESS.md).
+
 ## How it was verified
 
 Every claim was checked against the game rather than assumed:
@@ -101,6 +132,9 @@ Every claim was checked against the game rather than assumed:
   one: *"Identity confirmed. Welcome back."*
 - An edited card was booted in the emulator and the game decrypted it into its
   own memory showing the edited values.
+- The CPU model was checked against the running game: the profile buffers
+  were found at the predicted addresses in battle order, and a persona's move
+  choices were watched live over PINE, move by move, against its histogram.
 
 A wrong turn worth recording: the first attempt cribbed field positions against
 the built-in demo roster in the game binary. It gave 73/86 on wins and noise on
@@ -120,6 +154,9 @@ has drifted years away from it. Only the game's own screens are ground truth.
 | `pine.py` | PCSX2 PINE client for live EE memory reads and writes. |
 | `ee_xrefs.py`, `ee_disasm.py` | MIPS cross-reference and disassembly over a flat EE RAM image. |
 | `sc2profiles.py` | Finds decoded roster/ranking records in EE RAM. |
+
+`ee_disasm.py` emits R5900-only opcodes that Capstone cannot decode as raw
+words and keeps going, rather than truncating a listing at the first one.
 
 ### Editing safely
 
@@ -213,7 +250,7 @@ The full research log, including dead ends, is in [PROGRESS.md](PROGRESS.md).
   the card's story alive.
 
 Reverse engineering and tooling by [msaifuddin](https://github.com/msaifuddin)
-with Codex and Claude.
+with Claude (Anthropic).
 
 ## License
 

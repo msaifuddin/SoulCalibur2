@@ -24,7 +24,23 @@ def main() -> int:
     block = data[args.address : args.address + args.size]
     pending: dict[str, int] = {}
     stop_at = None
-    for insn in engine.disasm(block, args.address):
+
+    def instructions():
+        # Capstone stops at the first R5900-only opcode it does not know
+        # (the multimedia and 3-operand mult/div forms); emit those as raw
+        # words and keep going rather than truncating the listing.
+        offset = 0
+        while offset < len(block):
+            decoded = list(engine.disasm(block[offset:], args.address + offset))
+            for insn in decoded:
+                yield insn
+            offset += sum(insn.size for insn in decoded)
+            if offset < len(block):
+                word = struct.unpack_from("<I", block, offset)[0]
+                print(f"{args.address + offset:08x}: .word    {word:#010x}   ; undecoded R5900 op")
+                offset += 4
+
+    for insn in instructions():
         note = ""
         if insn.mnemonic == "lui":
             register, immediate = [part.strip() for part in insn.op_str.split(",")]

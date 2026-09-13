@@ -11,3 +11,4 @@ __pycache__/
 *.edited
 *.bak
 publish.ps1
+.gh_token

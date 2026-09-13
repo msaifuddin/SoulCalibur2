@@ -68,10 +68,20 @@ def windows_of(pid: int) -> list[int]:
 
 
 def focus(pid: int) -> int:
+    # Already in front (the user is playing in it)? Then there is nothing to do.
+    foreground = user32.GetForegroundWindow()
+    owner = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(foreground, ctypes.byref(owner))
+    if owner.value == pid:
+        return int(foreground)
     for hwnd in windows_of(pid):
         user32.ShowWindow(hwnd, 5)
+        # Windows refuses SetForegroundWindow from a background process unless
+        # the caller has just generated input; a bare ALT tap satisfies that.
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.keybd_event(0x12, 0, 2, 0)
         user32.SetForegroundWindow(hwnd)
-        time.sleep(0.2)
+        time.sleep(0.3)
         if user32.GetForegroundWindow() == hwnd:
             return hwnd
     raise SystemExit(f"could not focus a window of pid {pid}")
@@ -254,7 +264,7 @@ def command_type(args) -> int:
     return command_step(args)
 
 
-def settle(path: Path, timeout: float = 5.0) -> None:
+def settle(path: Path, timeout: float = 20.0) -> None:
     """Wait until PCSX2 has finished writing a screenshot before reading it."""
     deadline = time.time() + timeout
     while time.time() < deadline:
