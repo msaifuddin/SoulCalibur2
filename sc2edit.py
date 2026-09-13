@@ -175,6 +175,62 @@ def verify_image(rebuilt: bytes, index: int, name, wins, losses, password=None) 
     return problems
 
 
+def command_create(args) -> int:
+    """Add a new Conquest opponent: cloned from a live persona, then rewritten."""
+    import random
+
+    import sc2persona
+
+    if args.random and args.style:
+        raise EditError("pass --random or --style, not both")
+    if not args.name.startswith("<") and args.password is None:
+        raise EditError("a loginable (unbracketed) name needs --password")
+
+    raw = args.card.read_bytes()
+    data = sc2cardfs.card_data(args.card)
+    rng = random.Random(args.seed)
+
+    if args.style:
+        style = sc2persona.load_style(Path(args.style))
+    else:
+        character = args.character if args.character is not None else rng.choice(
+            [c for c in sc2persona.CHARACTERS if (sc2persona.MOVETABLES / f"{c:02x}.json").exists()]
+        )
+        style = sc2persona.random_style(character, rng)
+    if args.character is not None:
+        style.character = args.character
+    wins = args.wins if args.wins is not None else rng.randint(20, 160)
+    losses = args.losses if args.losses is not None else rng.randint(5, 60)
+    password = args.password or "".join(rng.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(4))
+
+    data, position, dropped = sc2persona.create_persona(
+        data, args.template, args.name, password, style, wins, losses,
+    )
+    rebuilt = sc2card.rebuild_card(data, raw)
+    problems = verify_image(rebuilt, position, args.name, wins, losses, password)
+    if problems:
+        raise EditError("refusing to write: " + "; ".join(problems))
+
+    output = args.output or args.card.with_suffix(args.card.suffix + ".edited")
+    print(f"persona   {args.name}")
+    print(f"character {sc2persona.CHARACTERS.get(style.character, style.character)}")
+    print(f"password  {password}")
+    print(f"record    {position}  wins {wins}  losses {losses}  moves in style {len(style.prefs)}")
+    if dropped:
+        print(f"note      history-log entry {dropped!r} fell off the end of the index")
+    if args.dry_run:
+        print("dry run: verified, nothing written")
+        return 0
+    if not args.no_backup:
+        backup = args.card.with_suffix(args.card.suffix + ".bak")
+        if not backup.exists():
+            shutil.copy2(args.card, backup)
+            print(f"backed up the original to {backup}")
+    output.write_bytes(rebuilt)
+    print(f"wrote {output}")
+    return 0
+
+
 def command_verify(args) -> int:
     raw = args.card.read_bytes()
     data = sc2cardfs.card_data(args.card)
@@ -227,6 +283,22 @@ def main() -> int:
     setter.add_argument("--no-backup", action="store_true")
     setter.add_argument("--dry-run", action="store_true")
     setter.set_defaults(handler=command_set)
+
+    create = commands.add_parser("create", help="add a new Conquest opponent (persona)")
+    create.add_argument("card", type=Path)
+    create.add_argument("name", help="<BRACKETED> for a CPU-only persona, plain to allow login")
+    create.add_argument("--template", default="<KENTON♪>", help="live persona to clone the record shape from")
+    create.add_argument("--character", type=lambda x: int(x, 0), help="character id, e.g. 0x12 Astaroth")
+    create.add_argument("--style", help="JSON file with ratios and (distance,state,move,weight) prefs")
+    create.add_argument("--random", action="store_true", help="random style (default when no --style)")
+    create.add_argument("--seed", type=int)
+    create.add_argument("--password", help="1-4 grid characters; random if omitted")
+    create.add_argument("--wins", type=int)
+    create.add_argument("--losses", type=int)
+    create.add_argument("--output", type=Path)
+    create.add_argument("--no-backup", action="store_true")
+    create.add_argument("--dry-run", action="store_true")
+    create.set_defaults(handler=command_create)
 
     verify = commands.add_parser("verify", help="check a card's integrity")
     verify.add_argument("card", type=Path)

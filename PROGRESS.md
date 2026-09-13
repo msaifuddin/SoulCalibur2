@@ -182,6 +182,49 @@ with your recorded move preferences. That is the actual ghost system.
 at `+0x1cd8`, last move at `+0x2548`, derived parameters at `+0xfe4`. Profile
 buffers: own at `0xcca000`, enemy N at `0xcca000 + N*0x2000`.
 
+## Creating accounts (solved)
+
+Two more record fields had to fall before a new account could be written
+from nothing, and both came from the code rather than from cribbing.
+
+**The live count.** The index header's halfword at `+0x0c` (41 on this card)
+is the number of records the game treats as live accounts. The name search at
+EE `0x1af630` walks exactly that many; the enemy draw uses the same table
+object. The other 399 records are a *history log* of one-session players —
+never loginable, never drawn as opponents, no slot. That explains the card at
+a stroke: 40 shipped personas + the owner's account are live; everyone else
+who ever put in a credit is a log line. A new account has to be inserted
+inside the live region and the count bumped.
+
+**The slot link.** Each live account owns a *pair* of slots. The load task at
+`0x1b3e00` reads two 10-bit slot numbers from the record — `word[0x44] >> 17`
+and `word[0x48] & 0x3ff`, both stored +12 — and bit `0x20000000` of
+`word[0x34]` says which is current. A wear-levelling double buffer. Verified
+on all 41 live accounts. **Character** is a 5-bit field at bit 432 (matched
+the ELF roster on 37/37). The record also opens with two timestamps, seconds
+since 2000-01-01, decoded by `0x1b1808`.
+
+`sc2persona.create_persona` therefore: clones a live persona's record and
+slot (so every field the game validates stays valid), rewrites name,
+password, character, wins, losses and timestamps, links a fresh slot pair,
+clears the recent-opponent list, writes an authored play-style profile into
+both slots, inserts the record at the end of the live region in both index
+generations and increments the count. The last history-log line falls off
+the 441-record table.
+
+**Verified in the lab:** three created personas appeared in the game's own
+decrypted index; two were drawn on the "Fight the enemy" list with the
+correct portraits and records; the third — unbracketed — logged in through
+the PASSWORD path ("Identity confirmed. Welcome back.") with a clean history.
+One detail only the test revealed: the name grid has no `<` `>`, so bracketed
+names cannot be typed. That is how Namco makes CPU personas un-loginable, and
+`sc2edit create` follows the same rule.
+
+Move tables for styles come from the running game: each character's command
+table (`fighter+0x1c`, names at `+4`) is captured to
+`research-data/movetables/<id>.json`; Astaroth, Ivy, Cervantes and Talim are
+captured so far.
+
 ## Card layout (data pages, ECC stripped)
 
 | Page | Contents |
@@ -294,6 +337,8 @@ inferred.
 | Account record | Solved: name, password, wins, losses; edits accepted by the game, password login proven |
 | Account slot | Solved: header, recent-opponent list, play-style profile |
 | CPU opponent model | Solved: profile → situation classes → weighted move draw; rank → difficulty; verified live |
+| Live count and slot links | Solved: header `+0x0c` bounds the live accounts; two 10-bit slot numbers per record |
+| Creating accounts | Solved: `sc2edit create` — new personas drawn as opponents and logged into, in the lab |
 | Editing tool | Done: `sc2edit.py` with backup, range checks and full re-read verification |
 
 ### Known and left as is
@@ -301,18 +346,18 @@ inferred.
 These are understood well enough to say what they are, and are not needed to
 read or edit the card:
 
-- **Other index-record bytes** (`0x36`-`0x38`, `0x3a`, `0x3d`, `0x44`-`0x45`)
-  change between the two index generations. Rank is decoded (it feeds the
-  difficulty table); the rest are almost certainly experience, army and
-  character. Nobody has needed to edit them.
+- **Other index-record bytes.** Character (bit 432), the slot links
+  (`0x34`, `0x44`, `0x48`) and the timestamps (`0x00`, `0x04`) are now
+  decoded; what remains in `0x36`-`0x3d` is experience and army bookkeeping
+  that a created account correctly inherits from its template.
 - **Wins/losses field widths.** Only 11 and 9 bits are ever used across all
   440 records; the bits above are zero card-wide, so the true field boundary
   is unproven. `sc2edit` limits writes to the observed range, which is more
   than any real account will reach.
-- **Creating a brand-new account from the tool.** Every registration in the
-  lab stayed in memory; the game only writes the card at the end of a full
-  8-battle session, and no run went that far. Updating existing accounts is
-  what people want in practice.
+- **Rank and army bytes** in the record. Rank is understood well enough for
+  the difficulty table, and a created persona inherits its template's rank
+  and army, which is what the game expects. Setting them directly was never
+  needed.
 - **The other keyed blobs** (`0x1ff8` at `0x1b05ec`, and the static ones at
   `0x76ce20` / `0x76cf00`) use the same cipher under their own keys. They are
   not part of the card.

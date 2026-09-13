@@ -25,9 +25,11 @@ wrote samples/Card0.conquestcard.edited
   after     27  <FALCATA>      120W    30L
 ```
 
-Names, passwords, wins and losses can be read and written. Edited cards load in
-the game and the game reads back exactly what was written — including logging
-in with a changed password.
+Names, passwords, wins and losses can be read and written, and **new
+opponents can be created** with an authored fighting style. Edited cards load
+in the game and the game reads back exactly what was written — including
+logging in with a changed password, and logging in as an account that never
+existed until the tool wrote it.
 
 ## Background
 
@@ -86,6 +88,39 @@ Glyph codes index the game's own table at EE `0x49b9a0`:
 appears as ASCII on the card. The game's CPU opponents have bracketed names
 (`<FALCATA>`); names registered at the cabinet do not.
 
+## Creating opponents
+
+```
+python sc2edit.py create Card0.conquestcard "<BRUTUS>" --random --seed 3
+python sc2edit.py create Card0.conquestcard MYBOT --character 0x0b --password MB01 --style ivy.json
+```
+
+A persona is an index record plus a pair of account slots holding its
+play-style profile. `create` clones a live persona (so every field the game
+validates stays valid), then rewrites the name, password, character, record,
+timestamps and — the interesting part — the profile: a *(distance, opponent
+state) → move → weight* table written in numpad notation against the
+character's real command table, captured from the running game.
+
+```json
+{"character": 18, "ratios": [0.55, 0.62, 0.30, 0.48],
+ "prefs": [["close", "neutral", "66B", 200], ["close", "neutral", "6B", 160],
+           ["point-blank", "downed", "2BK", 200], ["point-blank", "air", "BG", 160]]}
+```
+
+The name decides what the persona is for. `<BRACKETED>` names cannot be typed
+on the login grid (there is no `<` key) — that is how the game keeps its own
+CPU personas un-loginable — so they are pure opponents. A plain name gets a
+password and can be logged into and played as.
+
+`claude_personas.py` is a worked example: three opponents with distinct
+styles — an Astaroth wall, a Talim swarm, an Ivy spacer — all of which the
+game drew as enemies and one of which it accepted at the password screen.
+
+Move tables ship for Astaroth (`0x12`), Ivy (`0x0b`), Cervantes (`0x14`) and
+Talim (`0x16`); any other character's is captured with one RAM dump while it
+is in a fight (see PROGRESS.md).
+
 ## How the CPU opponents work
 
 Every account slot also carries an 8 KB **play-style profile**: four ratios
@@ -135,6 +170,9 @@ Every claim was checked against the game rather than assumed:
 - The CPU model was checked against the running game: the profile buffers
   were found at the predicted addresses in battle order, and a persona's move
   choices were watched live over PINE, move by move, against its histogram.
+- Created accounts were loaded by the game into its own index, drawn on the
+  "Fight the enemy" list with the right portraits, and one was logged into
+  at the cabinet: *"Identity confirmed. Welcome back, CLAUDE.RE!"*
 
 A wrong turn worth recording: the first attempt cribbed field positions against
 the built-in demo roster in the game binary. It gave 73/86 on wins and noise on
@@ -145,7 +183,9 @@ has drifted years away from it. Only the game's own screens are ground truth.
 
 | Tool | Purpose |
 | --- | --- |
-| `sc2edit.py` | Read and update player stats. The one tool that writes. |
+| `sc2edit.py` | Read and update player stats, create opponents. The one tool that writes. |
+| `sc2persona.py` | Persona creation: slot links, live count, profile authoring from move tables. |
+| `claude_personas.py` | Worked example: three authored opponents. |
 | `sc2account.py` | The bit-packed account record: name/password codec, wins, losses. |
 | `sc2crypto.py` | The card/game stream cipher: `decrypt`, `encrypt`, `verify`. |
 | `sc2cardfs.py` | Card layout: account index, account slots, decrypted dumps. |
